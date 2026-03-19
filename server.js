@@ -1,107 +1,121 @@
-const express = require('express');
-const cors = require('cors');
-const mongoose = require('mongoose');
+import mongoose from "mongoose";
 
-const app = express();
-const PORT = process.env.PORT || 3000;
- //xd
-// Middlewares
-app.use(cors());
-app.use(express.json());
+// ===============================
+// CACHE GLOBAL (CLAVE 🔥)
+// ===============================
+let cached = global.mongoose;
 
-// ==========================================
-// CONEXIÓN A MONGODB
-// ==========================================
-mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log('✅ Conectado a MongoDB'))
-    .catch(err => console.error('❌ Error al conectar a MongoDB:', err));
+if (!cached) {
+  cached = global.mongoose = { conn: null, promise: null };
+}
 
-// ==========================================
-// MODELO DE DATOS (Schema)
-// ==========================================
+async function connectDB() {
+  if (cached.conn) return cached.conn;
+
+  if (!cached.promise) {
+    cached.promise = mongoose.connect(process.env.MONGO_URI, {
+      bufferCommands: false,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      family: 4
+    });
+  }
+
+  cached.conn = await cached.promise;
+  return cached.conn;
+}
+
+// ===============================
+// SCHEMA
+// ===============================
 const userSchema = new mongoose.Schema({
-    username: { type: String, required: true, unique: true },
-    racha: { type: Number, default: 0 },
-    puntos: { type: Number, default: 0 }
+  username: { type: String, required: true, unique: true },
+  racha: { type: Number, default: 0 },
+  puntos: { type: Number, default: 0 }
 }, { timestamps: true });
 
-const User = mongoose.model('User', userSchema);
+// Evita recompilar modelo en hot reload/serverless
+const User = mongoose.models.User || mongoose.model("User", userSchema);
 
-// ==========================================
-// ENDPOINTS (RUTAS)
-// ==========================================
+// ===============================
+// HANDLER (SIN EXPRESS)
+// ===============================
+export default async function handler(req, res) {
+  await connectDB();
 
-// 1. Obtener la lista de usuarios (Leaderboard)
-app.get('/api/usuarios', async (req, res) => {
-    try {
-        // Buscamos todos, ordenamos por puntos desc (-1) y racha desc
-        const usuarios = await User.find().sort({ puntos: -1, racha: -1 });
-        res.json(usuarios);
-    } catch (error) {
-        res.status(500).json({ error: 'Error al obtener el ranking' });
+  try {
+    // ===========================
+    // GET /api/usuarios
+    // ===========================
+    if (req.method === "GET" && req.url.includes("/api/usuarios")) {
+      const usuarios = await User.find().sort({ puntos: -1, racha: -1 });
+      return res.status(200).json(usuarios);
     }
-});
 
-// 2. Crear o actualizar un usuario manualmente
-app.post('/api/usuarios', async (req, res) => {
-    const { username, racha, puntos } = req.body;
+    // ===========================
+    // POST /api/usuarios
+    // ===========================
+    if (req.method === "POST" && req.url.includes("/api/usuarios") && !req.url.includes("win") && !req.url.includes("lose")) {
+      const { username, racha, puntos } = req.body;
 
-    if (!username) return res.status(400).json({ error: 'Falta el username.' });
+      if (!username) {
+        return res.status(400).json({ error: "Falta el username." });
+      }
 
-    try {
-        // upsert: true crea el documento si no existe
-        const user = await User.findOneAndUpdate(
-            { username },
-            { racha, puntos },
-            { new: true, upsert: true }
-        );
-        res.json({ mensaje: 'Usuario guardado/actualizado con éxito.', user });
-    } catch (error) {
-        res.status(500).json({ error: 'Error al procesar el usuario' });
+      const user = await User.findOneAndUpdate(
+        { username },
+        { racha, puntos },
+        { new: true, upsert: true }
+      );
+
+      return res.json({ mensaje: "Usuario guardado.", user });
     }
-});
 
-// 3. Registrar una victoria
-app.post('/api/usuarios/win', async (req, res) => {
-    const { username } = req.body;
-    if (!username) return res.status(400).json({ error: 'Falta el username.' });
+    // ===========================
+    // POST /api/usuarios/win
+    // ===========================
+    if (req.method === "POST" && req.url.includes("/win")) {
+      const { username } = req.body;
 
-    try {
-        const user = await User.findOneAndUpdate(
-            { username },
-            { $inc: { racha: 1, puntos: 25 } }, // Incrementa racha en 1 y puntos en 25
-            { new: true, upsert: true, setDefaultsOnInsert: true }
-        );
-        res.json({ mensaje: '¡Victoria registrada!', user });
-    } catch (error) {
-        res.status(500).json({ error: 'Error al registrar victoria' });
+      if (!username) {
+        return res.status(400).json({ error: "Falta el username." });
+      }
+
+      const user = await User.findOneAndUpdate(
+        { username },
+        { $inc: { racha: 1, puntos: 25 } },
+        { new: true, upsert: true, setDefaultsOnInsert: true }
+      );
+
+      return res.json({ mensaje: "¡Victoria!", user });
     }
-});
 
-// 4. Registrar una derrota
-app.post('/api/usuarios/lose', async (req, res) => {
-    const { username } = req.body;
-    if (!username) return res.status(400).json({ error: 'Falta el username.' });
+    // ===========================
+    // POST /api/usuarios/lose
+    // ===========================
+    if (req.method === "POST" && req.url.includes("/lose")) {
+      const { username } = req.body;
 
-    try {
-        const user = await User.findOne({ username });
-        
-        if (user) {
-            user.racha = 0;
-            user.puntos = Math.max(0, user.puntos - 15);
-            await user.save();
-        }
+      if (!username) {
+        return res.status(400).json({ error: "Falta el username." });
+      }
 
-        res.json({ mensaje: 'Derrota registrada.', user });
-    } catch (error) {
-        res.status(500).json({ error: 'Error al registrar derrota' });
+      const user = await User.findOne({ username });
+
+      if (user) {
+        user.racha = 0;
+        user.puntos = Math.max(0, user.puntos - 15);
+        await user.save();
+      }
+
+      return res.json({ mensaje: "Derrota.", user });
     }
-});
 
-app.get('/', (req, res) => {
-    res.send("🔥 Backend con MongoDB corriendo al 100%");
-});
+    // fallback
+    return res.status(404).json({ error: "Ruta no encontrada" });
 
-app.listen(PORT, () => {
-    console.log(`🔥 Servidor corriendo en el puerto ${PORT}`);
-});
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Error interno" });
+  }
+}
