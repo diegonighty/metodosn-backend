@@ -41,6 +41,15 @@ const User = mongoose.models.User || mongoose.model("User", userSchema);
 // HANDLER (SIN EXPRESS)
 // ===============================
 export default async function handler(req, res) {
+    // CORS
+  res.setHeader("Access-Control-Allow-Origin", "https://metodosn-front.vercel.app");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+  
   await connectDB();
 
   try {
